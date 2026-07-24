@@ -1,0 +1,290 @@
+// ShiftSync — Prisma Schema
+// Single source of truth for the database. All models defined here.
+// Run: npx prisma migrate dev --schema=backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum RosterStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum SwapStatus {
+  PENDING_PEER
+  PENDING_MANAGER
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AuditAction {
+  ROSTER_CREATED
+  ROSTER_UPDATED
+  ROSTER_PUBLISHED
+  ROSTER_DELETED
+  SHIFT_CREATED
+  SHIFT_UPDATED
+  SHIFT_DELETED
+  LEAVE_SUBMITTED
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  LEAVE_CANCELLED
+  SWAP_SUBMITTED
+  SWAP_PEER_ACCEPTED
+  SWAP_PEER_DECLINED
+  SWAP_APPROVED
+  SWAP_REJECTED
+  SWAP_CANCELLED
+  LABOR_RULE_CREATED
+  LABOR_RULE_UPDATED
+  USER_CREATED
+  USER_UPDATED
+  USER_DEACTIVATED
+}
+
+// ─── Organization (Tenant) ───────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users       User[]
+  teams       Team[]
+  rosters     Roster[]
+  laborRules  LaborRule[]
+  auditLogs   AuditLogEntry[]
+
+  @@map("organizations")
+}
+
+// ─── User ────────────────────────────────────────────────────────────────────
+
+model User {
+  id                 String   @id @default(cuid())
+  organizationId     String   @map("organization_id")
+  teamId             String?  @map("team_id")
+  name               String
+  email              String   @unique
+  passwordHash       String   @map("password_hash")
+  role               Role
+  isActive           Boolean  @default(true) @map("is_active")
+  hasOnboarded       Boolean  @default(false) @map("has_onboarded")
+  hashedRefreshToken String?  @map("hashed_refresh_token")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  team         Team?        @relation("TeamMembers", fields: [teamId], references: [id])
+  managedTeams Team[]       @relation("TeamManager")
+
+  assignedShifts   Shift[]
+  leaveRequests    LeaveRequest[]
+  swapRequestsSent SwapRequest[] @relation("SwapRequester")
+  swapRequestsRecv SwapRequest[] @relation("SwapTarget")
+  notifications    Notification[]
+  auditLogs        AuditLogEntry[]
+
+  @@index([organizationId])
+  @@index([email])
+  @@index([organizationId, role])
+  @@map("users")
+}
+
+// ─── Team ────────────────────────────────────────────────────────────────────
+
+model Team {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  managerId      String   @map("manager_id")
+  name           String
+  region         String   @default("DEFAULT")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  manager      User         @relation("TeamManager", fields: [managerId], references: [id])
+  members      User[]       @relation("TeamMembers")
+  rosters      Roster[]
+
+  @@index([organizationId])
+  @@index([managerId])
+  @@map("teams")
+}
+
+// ─── Roster ──────────────────────────────────────────────────────────────────
+
+model Roster {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  teamId         String       @map("team_id")
+  weekStart      DateTime     @map("week_start") // Always Monday 00:00:00 UTC
+  status         RosterStatus @default(DRAFT)
+  version        Int          @default(0) // Optimistic locking — increment on every write
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  team         Team         @relation(fields: [teamId], references: [id])
+  shifts       Shift[]
+
+  @@unique([teamId, weekStart]) // One roster per team per week
+  @@index([organizationId])
+  @@index([teamId, weekStart])
+  @@map("rosters")
+}
+
+// ─── Shift ───────────────────────────────────────────────────────────────────
+
+model Shift {
+  id             String   @id @default(cuid())
+  rosterId       String   @map("roster_id")
+  organizationId String   @map("organization_id")
+  employeeId     String   @map("employee_id")
+  startTime      DateTime @map("start_time")
+  endTime        DateTime @map("end_time")
+  positionLabel  String   @map("position_label") // e.g. "Cashier", "Nurse"
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  roster   Roster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  employee User   @relation(fields: [employeeId], references: [id])
+
+  swapRequestsAsSent SwapRequest[] @relation("SwapRequesterShift")
+  swapRequestsAsRecv SwapRequest[] @relation("SwapTargetShift")
+
+  @@index([rosterId])
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("shifts")
+}
+
+// ─── Leave Request ───────────────────────────────────────────────────────────
+
+model LeaveRequest {
+  id             String      @id @default(cuid())
+  organizationId String      @map("organization_id")
+  employeeId     String      @map("employee_id")
+  startDate      DateTime    @map("start_date")
+  endDate        DateTime    @map("end_date")
+  reason         String      @db.Text
+  status         LeaveStatus @default(PENDING)
+  managerComment String?     @map("manager_comment") @db.Text
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  employee User @relation(fields: [employeeId], references: [id])
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([organizationId, status])
+  @@map("leave_requests")
+}
+
+// ─── Swap Request ────────────────────────────────────────────────────────────
+
+model SwapRequest {
+  id               String     @id @default(cuid())
+  organizationId   String     @map("organization_id")
+  requesterId      String     @map("requester_id")
+  targetEmployeeId String     @map("target_employee_id")
+  requesterShiftId String     @map("requester_shift_id")
+  targetShiftId    String     @map("target_shift_id")
+  status           SwapStatus @default(PENDING_PEER)
+  managerComment   String?    @map("manager_comment") @db.Text
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  requester      User  @relation("SwapRequester", fields: [requesterId], references: [id])
+  targetEmployee User  @relation("SwapTarget", fields: [targetEmployeeId], references: [id])
+  requesterShift Shift @relation("SwapRequesterShift", fields: [requesterShiftId], references: [id])
+  targetShift    Shift @relation("SwapTargetShift", fields: [targetShiftId], references: [id])
+
+  @@index([organizationId])
+  @@index([requesterId])
+  @@index([targetEmployeeId])
+  @@index([organizationId, status])
+  @@map("swap_requests")
+}
+
+// ─── Labor Rule ──────────────────────────────────────────────────────────────
+
+model LaborRule {
+  id              String   @id @default(cuid())
+  organizationId  String   @map("organization_id")
+  region          String   @default("DEFAULT") // e.g. "US-CA", "UK", "DEFAULT"
+  maxWeeklyHours  Int      @default(48) @map("max_weekly_hours")
+  minStaffPerShift Int     @default(1) @map("min_staff_per_shift")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, region])
+  @@index([organizationId])
+  @@map("labor_rules")
+}
+
+// ─── Audit Log Entry (immutable) ─────────────────────────────────────────────
+
+model AuditLogEntry {
+  id             String      @id @default(cuid())
+  organizationId String      @map("organization_id")
+  actorUserId    String      @map("actor_user_id")
+  action         AuditAction
+  entityType     String      @map("entity_type") // "Roster", "Shift", etc.
+  entityId       String      @map("entity_id")
+  beforeState    Json?       @map("before_state") // nullable — null on CREATE
+  afterState     Json        @map("after_state")
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  actor        User         @relation(fields: [actorUserId], references: [id])
+
+  @@index([organizationId])
+  @@index([actorUserId])
+  @@index([organizationId, entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_log_entries")
+}
+
+// ─── Notification ────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  message   String   @db.Text
+  isRead    Boolean  @default(false) @map("is_read")
+  entityType String? @map("entity_type") // e.g. "LeaveRequest", "SwapRequest"
+  entityId   String? @map("entity_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@map("notifications")
+}
