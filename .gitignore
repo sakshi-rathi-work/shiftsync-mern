@@ -17,6 +17,7 @@ dist/
 # Markdown files (Excluded per user request)
 *.md
 **/*.md
+!README.md
 
 # Environment variables & secrets (NEVER COMMIT)
 .env
