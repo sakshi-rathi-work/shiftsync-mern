@@ -138,13 +138,3 @@ Run from `backend/` directory or with `--workspace=backend`:
 | `npm run db:seed --workspace=backend` | Seeds initial organization, admin user & labor rules |
 | `npm run db:studio --workspace=backend` | Opens Prisma Studio GUI to inspect DB records |
 
----
-
-## 📚 Project Documentation
-
-Detailed architecture and design specifications are available in the root directory:
-
-- [architecture.md](file:///c:/Users/Sakshi/Desktop/shiftsync-mern/architecture.md) — Tech stack rationale, monorepo structure, ORM strategy, security & caching.
-- [business-context.md](file:///c:/Users/Sakshi/Desktop/shiftsync-mern/business-context.md) — Roles, permissions, tenancy rules, roster state machines & conflict engine specs.
-- [api-reference.md](file:///c:/Users/Sakshi/Desktop/shiftsync-mern/api-reference.md) — Endpoint documentation, payload schemas, and error responses.
-- [style-guide.md](file:///c:/Users/Sakshi/Desktop/shiftsync-mern/style-guide.md) — Dark mode design tokens, layout specifications, and onboarding UI design.
